@@ -70,6 +70,16 @@ FIELDS = [
 ]
 HEADERS = [header for _, header in FIELDS]
 
+# 1-based column positions, derived from FIELDS so they stay in sync with the layout.
+KEYS = [key for key, _ in FIELDS]
+DATE_COL = KEYS.index("date") + 1
+TIME_COL = KEYS.index("time") + 1
+LAST_COL = len(FIELDS)
+
+
+def col_letter(idx):  # 1-based -> A, B, C ... (fine for our <=26 columns)
+    return chr(ord("A") + idx - 1)
+
 
 def read_config():
     # Config tab columns: Type (keyword|tag|source|location) | Value
@@ -100,6 +110,18 @@ def row_from(e):
     return row
 
 
+def date_time_formats(last_row, first_row=2):
+    """Number-format specs for the Date/Time columns over a row range."""
+    date = col_letter(DATE_COL)
+    time = col_letter(TIME_COL)
+    return [
+        {"range": f"{date}{first_row}:{date}{last_row}",
+         "format": {"numberFormat": {"type": "DATE", "pattern": "ddd, mmm d"}}},
+        {"range": f"{time}{first_row}:{time}{last_row}",
+         "format": {"numberFormat": {"type": "TIME", "pattern": "hh:mm"}}},
+    ]
+
+
 def write_sheets(payload, run_date):
     top_10 = payload.get("top_10", [])
     current = payload.get("current_events", [])
@@ -111,13 +133,34 @@ def write_sheets(payload, run_date):
     rows += [[], [f"ALL UPCOMING EVENTS ({len(current)})"], HEADERS]
     rows += [row_from(e) for e in current]
     current_ws.clear()
-    current_ws.update(values=rows, range_name="A1")
+    current_ws.update(values=rows, range_name="A1", value_input_option="USER_ENTERED")
+
+    # Bold both section titles and both header rows; tint the title rows;
+    # format Date/Time columns; freeze the top title+header rows.
+    # Row layout: 1=title, 2=headers, then top_10, blank, ALL-UPCOMING title, headers.
+    last_col = col_letter(LAST_COL)
+    title_rows = [1, 4 + len(top_10)]
+    header_rows = [2, 5 + len(top_10)]
+    title_fill = {"red": 0.85, "green": 0.92, "blue": 0.98}  # light blue
+    formats = [{"range": f"A{r}:{last_col}{r}",
+                "format": {"textFormat": {"bold": True}, "backgroundColor": title_fill}}
+               for r in title_rows]
+    formats += [{"range": f"A{r}:{last_col}{r}", "format": {"textFormat": {"bold": True}}}
+                for r in header_rows]
+    formats += date_time_formats(len(rows), first_row=3)
+    current_ws.batch_format(formats)
+    current_ws.freeze(rows=2)  # keep the title + first header row visible while scrolling
 
     # Past Events tab: append the newly-archived events
     if archive:
         if not past_ws.get_all_values():
             past_ws.update(values=[HEADERS], range_name="A1")
-        past_ws.append_rows([row_from(e) for e in archive], value_input_option="RAW")
+            past_ws.batch_format([{"range": f"A1:{col_letter(LAST_COL)}1",
+                                   "format": {"textFormat": {"bold": True}}}])
+            past_ws.freeze(rows=1)
+        past_ws.append_rows([row_from(e) for e in archive],
+                            value_input_option="USER_ENTERED")
+        past_ws.batch_format(date_time_formats(len(past_ws.get_all_values())))
 
 
 def build_kickoff(run_date, keywords, sources, locations, current_text, past_text):
