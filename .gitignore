@@ -1,9 +1,10 @@
-# Never commit credentials
+# Never commit credentials — but keep the tracked example templates
 *.json
 !**/.github/**
-service-account*.json
+!config/service-account.example.json
 .env
 .env.*
+!.env.example
 
 # Python
 __pycache__/

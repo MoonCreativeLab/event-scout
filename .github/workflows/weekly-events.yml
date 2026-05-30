@@ -11,11 +11,11 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.12"
-      - run: pip install -r requirements.txt
-      - run: python run_weekly.py
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run python run_weekly.py
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           AGENT_ID: ${{ secrets.AGENT_ID }}

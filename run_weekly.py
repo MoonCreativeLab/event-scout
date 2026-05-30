@@ -5,12 +5,14 @@ Reads the Config tab, runs the agent to discover + rank events, and writes the
 three tabs of the Google Sheet. The Google service-account key stays here on the
 runner — it never enters the agent's sandbox.
 
-Required env (GitHub Secrets):
+Required env:
     ANTHROPIC_API_KEY
     AGENT_ID
     ENVIRONMENT_ID
     GOOGLE_SHEET_ID
-    GOOGLE_SERVICE_ACCOUNT_JSON   # full service-account key JSON, pasted as a secret
+    Google service-account credentials — provide ONE of:
+      GOOGLE_SERVICE_ACCOUNT_JSON   # full key JSON inline (used in CI / GitHub Secrets)
+      GOOGLE_SERVICE_ACCOUNT_FILE   # path to the key file (convenient for local runs)
 """
 import os
 import json
@@ -19,10 +21,26 @@ import anthropic
 import gspread
 from google.oauth2.service_account import Credentials
 
+
+def load_service_account_info():
+    """Service-account creds from inline JSON (CI) or a file path (local)."""
+    raw = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if raw:
+        return json.loads(raw)
+    path = os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE")
+    if path:
+        with open(os.path.expanduser(path)) as f:
+            return json.load(f)
+    raise SystemExit(
+        "Set GOOGLE_SERVICE_ACCOUNT_JSON (inline, for CI) or "
+        "GOOGLE_SERVICE_ACCOUNT_FILE (path to the key file, for local runs)."
+    )
+
+
 AGENT_ID = os.environ["AGENT_ID"]
 ENVIRONMENT_ID = os.environ["ENVIRONMENT_ID"]
 SHEET_ID = os.environ["GOOGLE_SHEET_ID"]
-SA_INFO = json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"])
+SA_INFO = load_service_account_info()
 
 client = anthropic.Anthropic()  # ANTHROPIC_API_KEY from env
 
@@ -34,18 +52,37 @@ config_ws = ss.worksheet("Config")
 current_ws = ss.worksheet("Current Events")
 past_ws = ss.worksheet("Past Events")
 
-COLUMNS = ["name", "date", "time", "location", "source", "url",
-           "description", "relevance", "audience_fit", "price"]
+# Event columns as (machine key, display header). The key matches what the agent
+# submits via submit_events; the header is the human-friendly label written to the sheet.
+FIELDS = [
+    ("name", "Name"),
+    ("date", "Date"),
+    ("time", "Time"),
+    ("location", "Location"),
+    ("format", "Online/In-person"),
+    ("category", "Category"),
+    ("source", "Source"),
+    ("url", "URL"),
+    ("description", "Description"),
+    ("relevance", "Relevance"),
+    ("audience_fit", "Audience Fit"),
+    ("price", "Price"),
+]
+HEADERS = [header for _, header in FIELDS]
 
 
 def read_config():
-    # Config tab columns: Type (keyword|tag|source) | Value
+    # Config tab columns: Type (keyword|tag|source|location) | Value
     rows = config_ws.get_all_records()
-    keywords = [str(r["Value"]).strip() for r in rows
-                if str(r.get("Type", "")).strip().lower() in ("keyword", "tag") and r.get("Value")]
-    sources = [str(r["Value"]).strip() for r in rows
-               if str(r.get("Type", "")).strip().lower() == "source" and r.get("Value")]
-    return keywords, sources
+
+    def values_for(*types):
+        return [str(r["Value"]).strip() for r in rows
+                if str(r.get("Type", "")).strip().lower() in types and r.get("Value")]
+
+    keywords = values_for("keyword", "tag")
+    sources = values_for("source")
+    locations = values_for("location")
+    return keywords, sources, locations
 
 
 def sheet_text(ws, max_rows=400):
@@ -54,9 +91,13 @@ def sheet_text(ws, max_rows=400):
 
 
 def row_from(e):
-    return [e.get("name", ""), e.get("date", ""), e.get("time", ""), e.get("location", ""),
-            e.get("source", ""), e.get("url", ""), e.get("description", ""), e.get("relevance", ""),
-            "; ".join(e.get("audience_fit") or []), e.get("price", "")]
+    row = []
+    for key, _ in FIELDS:
+        val = e.get(key, "")
+        if isinstance(val, list):  # e.g. audience_fit, or a multi-topic category
+            val = "; ".join(str(v) for v in val)
+        row.append(val)
+    return row
 
 
 def write_sheets(payload, run_date):
@@ -65,9 +106,9 @@ def write_sheets(payload, run_date):
     archive = payload.get("archive_events", []) or []
 
     # Current Events tab: Top 10 section, then the full upcoming list
-    rows = [[f"TOP 10 MOST PROMISING — week of {run_date}"], COLUMNS]
+    rows = [[f"TOP 10 MOST PROMISING — week of {run_date}"], HEADERS]
     rows += [row_from(e) for e in top_10]
-    rows += [[], [f"ALL UPCOMING EVENTS ({len(current)})"], COLUMNS]
+    rows += [[], [f"ALL UPCOMING EVENTS ({len(current)})"], HEADERS]
     rows += [row_from(e) for e in current]
     current_ws.clear()
     current_ws.update(values=rows, range_name="A1")
@@ -75,15 +116,21 @@ def write_sheets(payload, run_date):
     # Past Events tab: append the newly-archived events
     if archive:
         if not past_ws.get_all_values():
-            past_ws.update(values=[COLUMNS], range_name="A1")
+            past_ws.update(values=[HEADERS], range_name="A1")
         past_ws.append_rows([row_from(e) for e in archive], value_input_option="RAW")
 
 
-def build_kickoff(run_date, keywords, sources, current_text, past_text):
+def build_kickoff(run_date, keywords, sources, locations, current_text, past_text):
+    location_block = (
+        f"Priority locations (favor in-person events in/near these; great virtual events are "
+        f"welcome too):\n- " + "\n- ".join(locations) + "\n\n"
+        if locations else ""
+    )
     return (
         f"Run date (today): {run_date}\n\n"
         f"Interest keywords/tags to match:\n- " + "\n- ".join(keywords) + "\n\n"
         f"Event sources to scan:\n- " + "\n- ".join(sources) + "\n\n"
+        + location_block +
         "Existing CURRENT EVENTS already in the sheet (dedupe against these; "
         "anything now before the run date should be archived):\n"
         f"{current_text}\n\n"
@@ -95,11 +142,11 @@ def build_kickoff(run_date, keywords, sources, current_text, past_text):
 
 
 def run_weekly():
-    keywords, sources = read_config()
+    keywords, sources, locations = read_config()
     if not keywords or not sources:
         raise SystemExit("Config tab is missing keywords or sources — check the sheet.")
     run_date = datetime.date.today().isoformat()
-    kickoff = build_kickoff(run_date, keywords, sources,
+    kickoff = build_kickoff(run_date, keywords, sources, locations,
                             sheet_text(current_ws), sheet_text(past_ws))
 
     session = client.beta.sessions.create(

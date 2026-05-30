@@ -1,4 +1,6 @@
-# Moon Event Scout
+# 🌙 Moon Event Scout
+
+[![Weekly Moon Event Scout](https://github.com/mooncreativelab/event-scout/actions/workflows/weekly-events.yml/badge.svg)](https://github.com/mooncreativelab/event-scout/actions/workflows/weekly-events.yml)
 
 A weekly [Managed Agent](https://platform.claude.com/docs/en/managed-agents/overview)
 that discovers upcoming tech / startup / innovation-community events (Eventbrite, Luma,
@@ -31,7 +33,7 @@ One spreadsheet, three tabs. The marketing/comms owner edits only the **Config**
 
 | Tab | Owner | Contents |
 |---|---|---|
-| `Config` | comms | Two columns: `Type` (`keyword` / `tag` / `source`) and `Value`. One row per entry. |
+| `Config` | comms | Two columns: `Type` (`keyword` / `tag` / `source` / `location`) and `Value`. One row per entry. |
 | `Current Events` | agent | Top 10 section at the top, full upcoming list below. Rewritten each run. |
 | `Past Events` | agent | Archive of events whose date has passed. Appended to each run. |
 
@@ -45,14 +47,20 @@ One spreadsheet, three tabs. The marketing/comms owner edits only the **Config**
 | source | Eventbrite |
 | source | Luma |
 | source | https://events.stanford.edu |
+| location | San Francisco |
+| location | Palo Alto |
+
+`location` rows tell the agent which areas to prioritize for in-person events (it still
+surfaces strong virtual ones). Each event row also gets a **Category** (topic) and an
+**Online/In-person** column.
 
 ## Setup (one time)
 
-1. **Create the agent + environment.**
+1. **Create the agent + environment.** Put your key in `.env` (copy `.env.example`),
+   then let uv handle the environment:
    ```sh
-   export ANTHROPIC_API_KEY=sk-ant-...
-   pip install -r requirements.txt
-   python setup_event_agent.py     # prints AGENT_ID and ENVIRONMENT_ID
+   uv sync
+   uv run --env-file .env python setup_event_agent.py   # prints AGENT_ID and ENVIRONMENT_ID
    ```
 2. **Create a Google service account** (Google Cloud Console → enable the *Google Sheets API*
    → IAM & Admin → Service Accounts → create → add a JSON key). The key's `client_email` is
@@ -67,12 +75,26 @@ One spreadsheet, three tabs. The marketing/comms owner edits only the **Config**
 5. **Smoke-test:** Actions → *Weekly Moon Event Scout* → **Run workflow**. Open the Console
    link the run prints and confirm the three tabs populate before trusting the Monday cron.
 
+## Run it locally
+
+Fill in `.env` (see `.env.example`). For local runs, drop your downloaded service-account
+key into the `config/` directory as `config/service-account.json` — that's the path
+`.env` already points `GOOGLE_SERVICE_ACCOUNT_FILE` at, and it's gitignored so it never
+gets committed. (See `config/service-account.example.json` for the expected shape; CI uses
+the inline `GOOGLE_SERVICE_ACCOUNT_JSON` secret instead.) Then:
+
+```sh
+uv run --env-file .env python run_weekly.py
+```
+
+The Sheet must exist with the three tabs and be shared (Editor) with the service-account email.
+
 ## Triggering
 
 - **Weekly:** cron in `.github/workflows/weekly-events.yml` (Mondays ~7am PT).
 - **Manual:** the **Run workflow** button (`workflow_dispatch`).
 - **HTTP POST:** uncomment `repository_dispatch` in the workflow, then
-  `POST /repos/<owner>/<repo>/dispatches` with `{"event_type":"run-event-scout"}`.
+  `POST /repos/mooncreativelab/event-scout/dispatches` with `{"event_type":"run-event-scout"}`.
 
 ## Notes
 
@@ -80,5 +102,8 @@ One spreadsheet, three tabs. The marketing/comms owner edits only the **Config**
   version and pass `agent={"type": "agent", "id": AGENT_ID, "version": N}` in `run_weekly.py`.
 - Some event sites throttle automated fetches; the agent leans on web search to find listings.
   Comms can add direct listing URLs as `source` rows to improve coverage.
-- To change the agent's behavior, edit `setup_event_agent.py` and re-run it as an **update**
-  (`client.beta.agents.update(...)`) rather than creating a new agent.
+- To change the agent's behavior (instructions, the `submit_events` fields), edit
+  `setup_event_agent.py` and re-run it **with `AGENT_ID` set** (the `.env` already has it):
+  `uv run --env-file .env python setup_event_agent.py`. It updates the live agent in place
+  to a new version — same id, so the next run picks it up automatically. Run it with no
+  `AGENT_ID` only for first-time creation.

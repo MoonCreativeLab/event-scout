@@ -1,0 +1,14 @@
+[project]
+name = "event-scout"
+version = "0.1.0"
+description = "Weekly managed agent that scouts tech/startup/community events into a Google Sheet for Moon Creative Lab."
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic",
+    "gspread",
+    "google-auth",
+]
+
+[tool.uv]
+# Standalone scripts, not an installable package — uv just manages the env + lock.
+package = false
