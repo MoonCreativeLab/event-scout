@@ -1,0 +1,24 @@
+name: Weekly Moon Event Scout
+on:
+  schedule:
+    - cron: "0 14 * * 1"      # Mondays 14:00 UTC (~7am PT)
+  workflow_dispatch: {}        # manual "Run workflow" button
+  # repository_dispatch:       # uncomment to trigger via HTTP POST:
+  #   types: [run-event-scout] #   POST /repos/<owner>/<repo>/dispatches {"event_type":"run-event-scout"}
+jobs:
+  scout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python run_weekly.py
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AGENT_ID: ${{ secrets.AGENT_ID }}
+          ENVIRONMENT_ID: ${{ secrets.ENVIRONMENT_ID }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
