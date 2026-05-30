@@ -1,4 +1,4 @@
-# 🌙 Moon Event Scout
+# Moon Event Scout
 
 [![Weekly Moon Event Scout](https://github.com/mooncreativelab/event-scout/actions/workflows/weekly-events.yml/badge.svg)](https://github.com/mooncreativelab/event-scout/actions/workflows/weekly-events.yml)
 
