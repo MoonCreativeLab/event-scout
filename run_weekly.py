@@ -82,12 +82,20 @@ def col_letter(idx):  # 1-based -> A, B, C ... (fine for our <=26 columns)
 
 
 def read_config():
-    # Config tab columns: Type (keyword|tag|source|location) | Value
-    rows = config_ws.get_all_records()
+    # Config tab: column A = Type (keyword|tag|source|location), column B = Value.
+    # Read ONLY columns A:B (from row 2, skipping the header) so anything parked
+    # in later columns — the Instructions box, notes, stray cells — is ignored.
+    # This sidesteps get_all_records()'s duplicate-header check entirely.
+    rows = config_ws.get("A2:B")  # list of [type, value]; trailing blanks trimmed
 
     def values_for(*types):
-        return [str(r["Value"]).strip() for r in rows
-                if str(r.get("Type", "")).strip().lower() in types and r.get("Value")]
+        out = []
+        for r in rows:
+            typ = (r[0] if len(r) > 0 else "").strip().lower()
+            val = (r[1] if len(r) > 1 else "").strip()
+            if typ in types and val:
+                out.append(val)
+        return out
 
     keywords = values_for("keyword", "tag")
     sources = values_for("source")
